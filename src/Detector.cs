@@ -29,6 +29,7 @@ namespace LosslessSwitcher
     {
         public int Rate, Bits;
         public string Origin;
+        public string SongId; // Apple catalog id, when the format came from the catalog
         public override string ToString() { return Bits + "/" + Rate + " via " + Origin; }
     }
 
@@ -46,7 +47,8 @@ namespace LosslessSwitcher
         DateTime _tokenExpiresUtc;
 
         // Catalog results survive restarts, so repeat plays switch without a network round trip.
-        // One line per track: storefront, title, artist, album, rate, bits (tab-separated).
+        // One line per track: storefront, title, artist, album, rate, bits, catalog song id (tab-separated;
+        // lines written by 1.1 have no song id).
         static readonly string CacheFile = Path.Combine(Settings.Dir, "catalog-cache.tsv");
 
         public Detector()
@@ -76,9 +78,10 @@ namespace LosslessSwitcher
                 {
                     var p = line.Split('\t');
                     int rate, bits;
-                    if (p.Length != 6 || p[0] != _storefront || !int.TryParse(p[4], out rate) || !int.TryParse(p[5], out bits)) continue;
+                    if (p.Length < 6 || p[0] != _storefront || !int.TryParse(p[4], out rate) || !int.TryParse(p[5], out bits)) continue;
                     var key = new TrackInfo { Title = p[1], Artist = p[2], Album = p[3] }.Key;
-                    _catalogMemo[key] = new SourceFormat { Rate = rate, Bits = bits, Origin = "saved catalog result" };
+                    _catalogMemo[key] = new SourceFormat { Rate = rate, Bits = bits, Origin = "saved catalog result",
+                                                           SongId = p.Length > 6 && p[6].Length > 0 ? p[6] : null };
                     n++;
                 }
                 Log.Write("Loaded " + n + " saved catalog results.");
@@ -92,7 +95,7 @@ namespace LosslessSwitcher
             {
                 Directory.CreateDirectory(Settings.Dir);
                 lock (_catalogMemo)
-                    File.AppendAllText(CacheFile, string.Join("\t", _storefront, Clean(t.Title), Clean(t.Artist), Clean(t.Album), f.Rate, f.Bits) + Environment.NewLine);
+                    File.AppendAllText(CacheFile, string.Join("\t", _storefront, Clean(t.Title), Clean(t.Artist), Clean(t.Album), f.Rate, f.Bits, f.SongId ?? "") + Environment.NewLine);
             }
             catch (Exception ex) { Log.Write("Catalog cache save failed: " + ex.Message); }
         }
@@ -231,7 +234,7 @@ namespace LosslessSwitcher
                         var manifest = await GetAsync(hls, null, ct);
                         if (manifest == null) return null;
                         result = BestLosslessVariant(manifest);
-                        if (result != null) result.Origin = "catalog song " + match;
+                        if (result != null) { result.Origin = "catalog song " + match; result.SongId = match; }
                         Log.Write("Catalog song " + match + " variants: " + string.Join(", ",
                             Regex.Matches(manifest, @"#EXT-X-MEDIA:TYPE=AUDIO[^\n]*").Cast<Match>()
                                 .Select(m => Regex.Match(m.Value, @"GROUP-ID=""([^""]+)""").Groups[1].Value)
@@ -324,6 +327,102 @@ namespace LosslessSwitcher
             var data = Dig(root, "data") as object[];
             if (data == null || data.Length == 0) return null;
             return Dig(data[0] as Dictionary<string, object>, "attributes", "extendedAssetUrls", "enhancedHls") as string ?? "";
+        }
+
+        // ---------------------------------------------------------------- Album rate
+
+        readonly Dictionary<string, string> _albumOfSong = new Dictionary<string, string>();          // song id -> album id
+        readonly Dictionary<string, List<SourceFormat>> _albumMemo = new Dictionary<string, List<SourceFormat>>(); // album id -> every track's format
+
+        /// <summary>
+        /// The highest lossless format on the playing track's album within the track's own rate family
+        /// (44.1 or 48 kHz multiples, so any upsampling is by a whole-number ratio). Lets the device be set
+        /// once per album. Null when the album can't be resolved (local files, lookups failing).
+        /// </summary>
+        public async Task<SourceFormat> AlbumFormatAsync(TrackInfo t, SourceFormat trackFormat, CancellationToken ct)
+        {
+            int familyBase = trackFormat.Rate % 44100 == 0 ? 44100 : trackFormat.Rate % 48000 == 0 ? 48000 : 0;
+            if (familyBase == 0) return null;
+            var all = await AlbumFormatsAsync(t, trackFormat, ct);
+            if (all == null) return null;
+            var best = all.Where(f => f.Rate % familyBase == 0)
+                .OrderByDescending(f => f.Rate).ThenByDescending(f => f.Bits).FirstOrDefault();
+            if (best == null) return null;
+            return new SourceFormat
+            {
+                Rate = best.Rate, Bits = best.Bits, SongId = trackFormat.SongId,
+                Origin = "album max (" + string.Join(", ", all.GroupBy(f => f.Bits + "/" + f.Rate)
+                    .Select(g => g.Count() + "× " + g.Key)) + ")",
+            };
+        }
+
+        async Task<List<SourceFormat>> AlbumFormatsAsync(TrackInfo t, SourceFormat trackFormat, CancellationToken ct)
+        {
+            try
+            {
+                var token = await TokenAsync(ct);
+                if (token == null) return null;
+                var songId = trackFormat.SongId ?? await SearchAsync(t, token, ct); // 1.1 cache lines have no id
+                if (songId == null) return null;
+
+                string albumId;
+                lock (_albumMemo) _albumOfSong.TryGetValue(songId, out albumId);
+                if (albumId == null)
+                {
+                    var songJson = await GetAsync(Catalog("songs/" + songId + "?include=albums"), token, ct);
+                    var songData = Parse(songJson, "data") as object[];
+                    var albums = songData != null && songData.Length > 0
+                        ? Dig(songData[0] as Dictionary<string, object>, "relationships", "albums", "data") as object[] : null;
+                    albumId = albums != null && albums.Length > 0 ? Str(albums[0] as Dictionary<string, object>, "id") : null;
+                    if (string.IsNullOrEmpty(albumId)) return null;
+                    lock (_albumMemo) _albumOfSong[songId] = albumId;
+                }
+
+                List<SourceFormat> memo;
+                lock (_albumMemo) if (_albumMemo.TryGetValue(albumId, out memo)) return memo;
+
+                // Album -> track ids -> one batched song lookup with every track's stream list.
+                var albumJson = await GetAsync(Catalog("albums/" + albumId), token, ct);
+                var albumData = Parse(albumJson, "data") as object[];
+                var tracks = albumData != null && albumData.Length > 0
+                    ? Dig(albumData[0] as Dictionary<string, object>, "relationships", "tracks", "data") as object[] : null;
+                if (tracks == null) return null;
+                var ids = tracks.OfType<Dictionary<string, object>>().Where(x => Str(x, "type") == "songs")
+                    .Select(x => Str(x, "id")).Where(x => x.Length > 0).Take(300).ToList();
+                if (ids.Count == 0) return null;
+                var songsJson = await GetAsync(Catalog("songs?extend=extendedAssetUrls&ids=" + string.Join(",", ids)), token, ct);
+                var songs = Parse(songsJson, "data") as object[];
+                if (songs == null) return null;
+                var hlsUrls = songs.OfType<Dictionary<string, object>>()
+                    .Select(x => Dig(x, "attributes", "extendedAssetUrls", "enhancedHls") as string)
+                    .Where(u => !string.IsNullOrEmpty(u)).ToList();
+
+                // Read each track's stream list, four at a time.
+                var gate = new SemaphoreSlim(4);
+                var results = await Task.WhenAll(hlsUrls.Select(async url =>
+                {
+                    await gate.WaitAsync(ct);
+                    try { var m = await GetAsync(url, null, ct); return m == null ? null : BestLosslessVariant(m); }
+                    finally { gate.Release(); }
+                }));
+                var found = results.Where(r => r != null).ToList();
+                if (found.Count == 0 || found.Count < hlsUrls.Count) return null; // a partial album can't give a trustworthy maximum
+                lock (_albumMemo) _albumMemo[albumId] = found;
+                Log.Write("Album " + albumId + " (" + found.Count + " lossless tracks): " +
+                    string.Join(", ", found.GroupBy(r => r.Bits + "/" + r.Rate).Select(g => g.Count() + "× " + g.Key)));
+                return found;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { Log.Write("Album lookup failed: " + ex.Message); return null; }
+        }
+
+        string Catalog(string path) { return "https://amp-api.music.apple.com/v1/catalog/" + _storefront + "/" + path; }
+
+        static object Parse(string json, string key)
+        {
+            if (json == null) return null;
+            var root = new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.DeserializeObject(json) as Dictionary<string, object>;
+            return Dig(root, key);
         }
 
         static SourceFormat BestLosslessVariant(string manifest)

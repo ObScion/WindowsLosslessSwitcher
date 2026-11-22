@@ -145,6 +145,12 @@ namespace LosslessSwitcher
                 _settings.Save();
             }) { Checked = _settings.PreferMultiples });
 
+            items.Add(new MenuItem("Match Album Rate", (s, e) =>
+            {
+                _settings.AlbumRate = !_settings.AlbumRate;
+                _settings.Save();
+            }) { Checked = _settings.AlbumRate });
+
             var selected = _devices.SelectedDevice;
             var devicesMenu = new MenuItem("Selected Device");
             devicesMenu.MenuItems.Add(new MenuItem("Default Device", (s, e) => _devices.SelectDevice(null))

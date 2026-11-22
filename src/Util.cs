@@ -24,6 +24,7 @@ namespace LosslessSwitcher
         public bool ShowIcon = true;          // userPreferIconStatusBarItem
         public bool BitDepth = false;         // userPreferBitDepthDetection
         public bool PreferMultiples = false;  // userPreferSampleRateMultiples
+        public bool AlbumRate = false;        // Windows addition: one rate per album (its highest track)
         public string DeviceId;               // selectedDeviceUID (null = Default Device)
         public string ScriptPath;             // shellScriptPath
 
@@ -43,6 +44,7 @@ namespace LosslessSwitcher
                 if (kv.TryGetValue("ShowIcon", out v)) s.ShowIcon = v == "1";
                 if (kv.TryGetValue("BitDepth", out v)) s.BitDepth = v == "1";
                 if (kv.TryGetValue("PreferMultiples", out v)) s.PreferMultiples = v == "1";
+                if (kv.TryGetValue("AlbumRate", out v)) s.AlbumRate = v == "1";
                 if (kv.TryGetValue("DeviceId", out v) && v.Length > 0) s.DeviceId = v;
                 if (kv.TryGetValue("ScriptPath", out v) && v.Length > 0) s.ScriptPath = v;
             }
@@ -60,6 +62,7 @@ namespace LosslessSwitcher
                     "ShowIcon=" + (ShowIcon ? 1 : 0),
                     "BitDepth=" + (BitDepth ? 1 : 0),
                     "PreferMultiples=" + (PreferMultiples ? 1 : 0),
+                    "AlbumRate=" + (AlbumRate ? 1 : 0),
                     "DeviceId=" + (DeviceId ?? ""),
                     "ScriptPath=" + (ScriptPath ?? ""),
                 });

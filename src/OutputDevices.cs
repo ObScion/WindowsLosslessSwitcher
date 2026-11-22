@@ -99,6 +99,17 @@ namespace LosslessSwitcher
                         if (src != null)
                         {
                             Log.Write("Detected " + src + " for " + track);
+                            // Match Album Rate: use the highest rate on this track's album (same rate family),
+                            // so a whole album plays without switching. Only for catalog tracks.
+                            if (_settings.AlbumRate && (src.SongId != null || src.Origin == "saved catalog result"))
+                            {
+                                var album = await _detector.AlbumFormatAsync(track, src, cts.Token);
+                                if (album != null && album.Rate > src.Rate)
+                                {
+                                    Log.Write("Using the album's rate: " + album);
+                                    src = album;
+                                }
+                            }
                             var dev = TargetDevice;
                             if (dev != null && NeedsSwitch(dev.Id, src) && !await WaitUntilSafeToSwitch(dev.Id, cts.Token))
                                 return;

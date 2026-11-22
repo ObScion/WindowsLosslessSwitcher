@@ -7,8 +7,9 @@ Play a 24-bit / 192 kHz Hi-Res Lossless track and your DAC switches to 192 kHz. 
 44.1 kHz, it switches back down. Windows stops resampling, and you hear the file as it was mastered.
 
 It's a faithful Windows port of [LosslessSwitcher](https://github.com/vincentneo/LosslessSwitcher) for
-macOS: one small tray icon, one menu, no windows. The whole app is a **single exe under 100 KB** with no
-installer, no runtime to install, no updater and no background services.
+macOS: one small tray icon, one menu, no windows. The whole app is a **single exe under 100 KB** that
+uses **about 3 MB of memory**, with no installer, no runtime to install, no updater and no background
+services.
 
 > This is the `lite` branch of a fork of
 > [jordanmgibson/WindowsLosslessSwitcher](https://github.com/jordanmgibson/WindowsLosslessSwitcher).
@@ -124,9 +125,11 @@ of this device* **on**. The app uses it to discover which rates your DAC support
 | Settings | `%APPDATA%\LosslessSwitcher\settings.ini` |
 | Log | `%APPDATA%\LosslessSwitcher\log.txt` (also under *About → Open Log*) |
 | Saved catalog results | `%APPDATA%\LosslessSwitcher\catalog-cache.tsv` (safe to delete) |
+| Saved catalog token | `%APPDATA%\LosslessSwitcher\catalog-token.txt`: the public token Apple's web player uses, kept so the app doesn't refetch it at every start (safe to delete) |
 
 When a switch surprises you, check the log. It records each track, the streams Apple offers for it,
-the format the app chose, how quickly it switched, and how long the dropout lasted.
+the format the app chose, how quickly it switched, how long the dropout lasted, and why an album
+lookup gave up when it did.
 
 ## Building from source
 

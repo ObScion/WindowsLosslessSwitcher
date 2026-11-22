@@ -163,6 +163,15 @@ namespace LosslessSwitcher
             var about = new MenuItem("About");
             about.MenuItems.Add(new MenuItem("Version - " + version.Major + "." + version.Minor) { Enabled = false });
             about.MenuItems.Add(new MenuItem("Build - " + version.Revision) { Enabled = false });
+            about.MenuItems.Add("-");
+            // GPL-3.0 "Appropriate Legal Notices": copyright, no warranty, and how to view the license.
+            about.MenuItems.Add(new MenuItem("© 2022 Vincent Neo (LosslessSwitcher)") { Enabled = false });
+            about.MenuItems.Add(new MenuItem("© 2026 Jordan Gibson (WindowsLosslessSwitcher)") { Enabled = false });
+            about.MenuItems.Add(new MenuItem("© 2026 ObScion (this Windows port)") { Enabled = false });
+            about.MenuItems.Add(new MenuItem("Free software under GPL-3.0, with no warranty") { Enabled = false });
+            about.MenuItems.Add(new MenuItem("View License", (s, e) => OpenUrl(RepoUrl + "/blob/lite/LICENSE")));
+            about.MenuItems.Add(new MenuItem("Source Code", (s, e) => OpenUrl(RepoUrl + "/tree/lite")));
+            about.MenuItems.Add("-");
             about.MenuItems.Add(new MenuItem("Open Log", (s, e) => OpenLog()));
             items.Add(about);
 
@@ -189,6 +198,14 @@ namespace LosslessSwitcher
                     _settings.Save();
                 }
             }
+        }
+
+        const string RepoUrl = "https://github.com/ObScion/WindowsLosslessSwitcher";
+
+        static void OpenUrl(string url)
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
+            catch (Exception ex) { Log.Write("Could not open " + url + ": " + ex.Message); }
         }
 
         static void OpenLog()

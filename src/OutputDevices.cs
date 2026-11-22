@@ -34,6 +34,7 @@ namespace LosslessSwitcher
             _watcher = watcher;
             _watcher.TrackChanged += TrackDidChange;
             RefreshDevices();
+            Task.Run(() => _detector.WarmUpAsync());
         }
 
         /// <summary>The user's pinned device, or the Windows default when unset/missing.</summary>
@@ -89,15 +90,16 @@ namespace LosslessSwitcher
             {
                 try
                 {
-                    // Like macOS: give the player a second, then retry every 2 s a few times.
-                    await Task.Delay(1000, cts.Token);
+                    // Look up right away so the switch lands at the very start of the track (macOS waits
+                    // 1 s for its logs to appear; the catalog doesn't need that). Retry every 2 s, since
+                    // a local file may not be in Apple Music's cache yet.
                     for (int attempt = 0; attempt < 5; attempt++)
                     {
                         var src = await _detector.DetectAsync(track, cts.Token);
                         if (src != null)
                         {
                             Log.Write("Detected " + src + " for " + track);
-                            SwitchTo(src, gen);
+                            SwitchTo(src, gen, track.DetectedUtc);
                             return;
                         }
                         await Task.Delay(2000, cts.Token);
@@ -109,7 +111,7 @@ namespace LosslessSwitcher
             });
         }
 
-        void SwitchTo(SourceFormat src, int gen)
+        void SwitchTo(SourceFormat src, int gen, DateTime trackChangedUtc)
         {
             bool switched = false;
             string deviceId;
@@ -133,12 +135,13 @@ namespace LosslessSwitcher
                     _formatCache.Remove(dev.Id);
                     return;
                 }
-                Log.Write("Switched " + dev.Name + " to " + target);
+                Log.Write("Switched " + dev.Name + " to " + target + ", " +
+                    (int)(DateTime.UtcNow - trackChangedUtc).TotalMilliseconds + " ms after the track change");
                 var now = CoreAudio.GetDeviceFormat(dev.Id) ?? target;
                 UpdateSampleRate(now.Rate, now.Bits);
                 switched = true;
             }
-            if (switched && _watcher.IsPlaying) WatchForStall(deviceId, gen);
+            if (switched && _watcher.IsPlaying) WatchAudioReturn(deviceId, gen);
         }
 
         DevFormat PickFormat(string deviceId, DevFormat cur, SourceFormat src)
@@ -176,21 +179,40 @@ namespace LosslessSwitcher
         }
 
         // A live format change invalidates Apple Music's render stream; it normally rebuilds it within
-        // a few seconds. If the device stays silent while Apple Music claims to be playing, nudge it once.
-        void WatchForStall(string deviceId, int gen)
+        // a few seconds. Logs how long the gap lasted; if the device is still silent after 8 s while
+        // Apple Music claims to be playing, nudge it once.
+        void WatchAudioReturn(string deviceId, int gen)
         {
             Task.Run(async () =>
             {
-                await Task.Delay(5000);
-                for (int i = 0; i < 6; i++)
+                const float Silence = 0.0005f;
+                var sw = Stopwatch.StartNew();
+                // Phase 1: the old stream keeps playing until Windows tears it down; wait for the silence to start.
+                long gapStart = -1;
+                while (sw.ElapsedMilliseconds < 3000)
+                {
+                    if (gen != _generation) return;
+                    var peak = CoreAudio.Peak(deviceId);
+                    if (peak < 0) return; // no meter on this device
+                    if (peak <= Silence) { gapStart = sw.ElapsedMilliseconds; break; }
+                    await Task.Delay(20);
+                }
+                if (gapStart < 0) { Log.Write("No dropout detected in the 3 s after the switch."); return; }
+                // Phase 2: wait for Apple Music's rebuilt stream to produce sound.
+                while (sw.ElapsedMilliseconds < gapStart + 8000)
                 {
                     if (gen != _generation || !_watcher.IsPlaying) return;
                     var peak = CoreAudio.Peak(deviceId);
-                    if (peak < 0 || peak > 0.0005f) return;
-                    await Task.Delay(500);
+                    if (peak > Silence)
+                    {
+                        Log.Write("Dropout started " + gapStart + " ms after the switch and lasted " +
+                            (sw.ElapsedMilliseconds - gapStart) + " ms.");
+                        return;
+                    }
+                    await Task.Delay(20);
                 }
                 if (gen != _generation || !_watcher.IsPlaying) return;
-                Log.Write("No audio after switch; nudging Apple Music (pause/play).");
+                Log.Write("No audio 8 s after the switch; nudging Apple Music (pause/play).");
                 try { await _watcher.NudgeAsync(); } catch (Exception ex) { Log.Write("Nudge failed: " + ex.Message); }
             });
         }

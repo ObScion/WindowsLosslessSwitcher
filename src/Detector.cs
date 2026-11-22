@@ -45,11 +45,56 @@ namespace LosslessSwitcher
         string _token;
         DateTime _tokenExpiresUtc;
 
+        // Catalog results survive restarts, so repeat plays switch without a network round trip.
+        // One line per track: storefront, title, artist, album, rate, bits (tab-separated).
+        static readonly string CacheFile = Path.Combine(Settings.Dir, "catalog-cache.tsv");
+
         public Detector()
         {
             string region = "us";
             try { region = RegionInfo.CurrentRegion.TwoLetterISORegionName.ToLowerInvariant(); } catch { }
             _storefront = region.Length == 2 ? region : "us";
+            LoadCache();
+        }
+
+        /// <summary>Fetch the catalog token up front so the first track change isn't slowed by it.</summary>
+        public async Task WarmUpAsync()
+        {
+            try { await TokenAsync(CancellationToken.None); }
+            catch (Exception ex) { Log.Write("Catalog warm-up failed: " + ex.Message); }
+        }
+
+        static string Clean(string s) { return (s ?? "").Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' '); }
+
+        void LoadCache()
+        {
+            try
+            {
+                if (!File.Exists(CacheFile)) return;
+                int n = 0;
+                foreach (var line in File.ReadAllLines(CacheFile))
+                {
+                    var p = line.Split('\t');
+                    int rate, bits;
+                    if (p.Length != 6 || p[0] != _storefront || !int.TryParse(p[4], out rate) || !int.TryParse(p[5], out bits)) continue;
+                    var key = new TrackInfo { Title = p[1], Artist = p[2], Album = p[3] }.Key;
+                    _catalogMemo[key] = new SourceFormat { Rate = rate, Bits = bits, Origin = "saved catalog result" };
+                    n++;
+                }
+                Log.Write("Loaded " + n + " saved catalog results.");
+            }
+            catch (Exception ex) { Log.Write("Catalog cache load failed: " + ex.Message); }
+        }
+
+        void SaveToCache(TrackInfo t, SourceFormat f)
+        {
+            try
+            {
+                Directory.CreateDirectory(Settings.Dir);
+                lock (_catalogMemo)
+                    File.AppendAllText(CacheFile, string.Join("\t", _storefront, Clean(t.Title), Clean(t.Artist), Clean(t.Album), f.Rate, f.Bits) + Environment.NewLine);
+            }
+            catch (Exception ex) { Log.Write("Catalog cache save failed: " + ex.Message); }
         }
 
         static HttpClient CreateHttp()
@@ -195,6 +240,7 @@ namespace LosslessSwitcher
                 }
                 lock (_catalogMemo) _catalogMemo[t.Key] = result;
                 if (result == null) Log.Write("Catalog: no lossless match for " + t);
+                else SaveToCache(t, result);  // only positive matches persist; a miss is retried next session
                 return result;
             }
             catch (OperationCanceledException) { throw; }

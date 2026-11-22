@@ -111,6 +111,11 @@ The source is six files in `src/`, about 1,600 lines in total.
   @jordanmgibson. It worked out how to do this on Windows: the catalog manifest lookup, the PlayCache
   layout and format switching through `IPolicyConfig`.
 
-## License
+## License and copyright
 
-GPL-3.0, like both projects above. Provided as-is: you use it at your own risk.
+- LosslessSwitcher: Copyright © 2022 Vincent Neo and contributors.
+- WindowsLosslessSwitcher: Copyright © 2026 Jordan Gibson and contributors.
+- This `lite` branch is a modified version of the works above. ObScion rewrote it in November 2026.
+
+This program is free software under the GNU General Public License v3.0, the same license as both
+projects above. See [LICENSE](LICENSE). It comes with no warranty: use it at your own risk.

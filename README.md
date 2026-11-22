@@ -7,7 +7,7 @@ Play a 24-bit / 192 kHz Hi-Res Lossless track and your DAC switches to 192 kHz. 
 44.1 kHz, it switches back down. Windows stops resampling, and you hear the file as it was mastered.
 
 It's a faithful Windows port of [LosslessSwitcher](https://github.com/vincentneo/LosslessSwitcher) for
-macOS: one small tray icon, one menu, no windows. The whole app is a **single 60 KB exe** with no
+macOS: one small tray icon, one menu, no windows. The whole app is a **single exe under 100 KB** with no
 installer, no runtime to install, no updater and no background services.
 
 > This is the `lite` branch of a fork of
@@ -15,9 +15,23 @@ installer, no runtime to install, no updater and no background services.
 > For the full-featured app, with a main window, toasts, a format cache and an auto-updater, use `main`
 > or the upstream project.
 
+## Download
+
+1. Open the [latest release](https://github.com/ObScion/WindowsLosslessSwitcher/releases/latest) and
+   download `LosslessSwitcher.exe`, or the zip, which also contains the license and this README.
+2. Put it somewhere permanent, such as `%LOCALAPPDATA%\Programs\LosslessSwitcher\`, and run it.
+   There's nothing to install. To uninstall, quit it from the tray and delete the file (and
+   `%APPDATA%\LosslessSwitcher` if you want your settings gone too).
+
+The exe isn't code-signed, so the first time you run it Windows SmartScreen may say it "protected your
+PC". Click **More info → Run anyway**. If you'd rather not trust a download, [build it yourself](#building-from-source):
+it takes one command.
+
 ## Using it
 
 Run `LosslessSwitcher.exe`. A music note appears in the system tray. Play something in Apple Music.
+To start it automatically, turn on **Launch at Login** in its menu. That points at wherever the exe
+is now, so move it before you turn this on.
 
 Click the icon to open the menu:
 
@@ -30,7 +44,7 @@ Click the icon to open the menu:
  Prefer Closest Sample Rate Multiple
  Selected Device               ▸    ← follow the Windows default, or pin one device
  Launch at Login
- About                         ▸
+ About                         ▸    ← version, credits, license, source code, log
  Scripting                     ▸    ← run a script on every rate change
  Quit LosslessSwitcher
 ```
@@ -103,9 +117,11 @@ the format the app chose, how quickly it switched, and how long the dropout last
 
 All you need is the C# compiler from Visual Studio or the free *Visual Studio Build Tools*. No .NET
 SDK and no NuGet packages: it compiles against the .NET Framework 4.8 built into Windows. The output
-is `bin\LosslessSwitcher.exe`.
+is `bin\LosslessSwitcher.exe`. Run `.\build.ps1 -Package` to also produce the release zip
+(`bin\LosslessSwitcher-<version>-win.zip`).
 
-The source is six files in `src/`, about 1,600 lines in total.
+The source is six files in `src/`, about 1,700 lines in total. `tools\make-icon.ps1` regenerates
+`src\app.ico`.
 
 ## Credits
 
@@ -123,3 +139,6 @@ The source is six files in `src/`, about 1,600 lines in total.
 
 This program is free software under the GNU General Public License v3.0, the same license as both
 projects above. See [LICENSE](LICENSE). It comes with no warranty: use it at your own risk.
+
+The released exe is built from this branch, and each release links to the exact source it was built
+from. Its *About* menu shows the copyright notices and links to the license and source.

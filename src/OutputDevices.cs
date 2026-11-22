@@ -34,7 +34,7 @@ namespace LosslessSwitcher
             _watcher = watcher;
             _watcher.TrackChanged += TrackDidChange;
             RefreshDevices();
-            Task.Run(() => _detector.WarmUpAsync());
+            Task.Run(async () => { await _detector.WarmUpAsync(); Memory.Compact(); });
         }
 
         /// <summary>The user's pinned device, or the Windows default when unset/missing.</summary>
@@ -122,6 +122,7 @@ namespace LosslessSwitcher
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception ex) { Log.Write("Track processing failed: " + ex); }
+                finally { Memory.Compact(); }
             });
         }
 

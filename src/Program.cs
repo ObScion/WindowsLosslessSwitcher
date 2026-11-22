@@ -253,8 +253,13 @@ namespace LosslessSwitcher
         [DllImport("uxtheme.dll", EntryPoint = "#136")] static extern void FlushMenuThemes();
         [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr handle);
 
-        static readonly string GlyphFont =
-            new InstalledFontCollection().Families.Any(f => f.Name == "Segoe Fluent Icons") ? "Segoe Fluent Icons" : "Segoe MDL2 Assets";
+        // Checking one font by name, rather than loading the whole system font list.
+        static readonly string GlyphFont = FontExists("Segoe Fluent Icons") ? "Segoe Fluent Icons" : "Segoe MDL2 Assets";
+
+        static bool FontExists(string name)
+        {
+            using (var f = new Font(name, 10f)) return f.Name == name; // Windows substitutes a fallback when missing
+        }
 
         static int ReadPersonalize(string name, int fallback)
         {

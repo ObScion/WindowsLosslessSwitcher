@@ -71,6 +71,28 @@ namespace LosslessSwitcher
         }
     }
 
+    /// <summary>
+    /// The app sits idle for minutes between short bursts of work (a track change, an album lookup).
+    /// .NET only cleans up when it needs room, so the leftovers of a burst would otherwise stay in
+    /// memory indefinitely. One compacting collection afterwards frees it inside .NET (a few ms), and
+    /// trimming the working set hands the now-unused pages back to Windows. That's the figure Task
+    /// Manager shows; pages the app touches again simply come back.
+    /// </summary>
+    static class Memory
+    {
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        static extern bool SetProcessWorkingSetSize(IntPtr process, IntPtr min, IntPtr max);
+
+        public static void Compact()
+        {
+            System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect(2, GCCollectionMode.Forced, true, true);
+            GC.WaitForPendingFinalizers();
+            try { SetProcessWorkingSetSize(System.Diagnostics.Process.GetCurrentProcess().Handle, (IntPtr)(-1), (IntPtr)(-1)); }
+            catch { }
+        }
+    }
+
     static class Log
     {
         static readonly string FilePath = Path.Combine(Settings.Dir, "log.txt");

@@ -260,32 +260,102 @@ namespace LosslessSwitcher
                     req.Headers.TryAddWithoutValidation("Origin", "https://music.apple.com");
                 }
                 using (var resp = await Http.SendAsync(req, ct))
+                {
+                    if (token != null && resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                    {
+                        Log.Write("Catalog token was rejected; a fresh one will be fetched.");
+                        ForgetToken();
+                    }
                     return resp.IsSuccessStatusCode ? await resp.Content.ReadAsStringAsync() : null;
+                }
             }
         }
 
         // The public web player embeds a developer token in its JS bundle.
+        // The web player's public developer token, saved so most startups skip fetching it.
+        static readonly string TokenFile = Path.Combine(Settings.Dir, "catalog-token.txt");
+        static readonly Regex TokenPattern = new Regex(@"eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+");
+
         async Task<string> TokenAsync(CancellationToken ct)
         {
             if (_token != null && _tokenExpiresUtc > DateTime.UtcNow.AddMinutes(5)) return _token;
+            if (_token == null && LoadSavedToken()) return _token;
+
             var html = await GetAsync("https://music.apple.com/" + _storefront + "/browse", null, ct);
             var m = html == null ? Match.Empty : Regex.Match(html, "src=\"(?<p>/assets/index[^\"']+\\.js)\"");
             if (!m.Success) { Log.Write("Catalog: web player bundle not found"); return null; }
-            var js = await GetAsync("https://music.apple.com" + m.Groups["p"].Value, null, ct);
-            var tm = js == null ? Match.Empty : Regex.Match(js, @"eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+");
-            if (!tm.Success) { Log.Write("Catalog: token not found"); return null; }
-            _token = tm.Value;
-            _tokenExpiresUtc = DateTime.UtcNow.AddHours(6);
+            var token = await FindTokenInStreamAsync("https://music.apple.com" + m.Groups["p"].Value, ct);
+            if (token == null) { Log.Write("Catalog: token not found"); return null; }
+            SetToken(token);
             try
             {
-                var seg = _token.Split('.')[1].Replace('-', '+').Replace('_', '/');
+                Directory.CreateDirectory(Settings.Dir);
+                File.WriteAllText(TokenFile, _token);
+            }
+            catch (Exception ex) { Log.Write("Saving catalog token failed: " + ex.Message); }
+            return _token;
+        }
+
+        bool LoadSavedToken()
+        {
+            try
+            {
+                if (!File.Exists(TokenFile)) return false;
+                SetToken(File.ReadAllText(TokenFile).Trim());
+                return _tokenExpiresUtc > DateTime.UtcNow.AddMinutes(5);
+            }
+            catch { return false; }
+        }
+
+        void SetToken(string token)
+        {
+            _token = token;
+            _tokenExpiresUtc = DateTime.UtcNow.AddHours(6); // if the expiry can't be read
+            try
+            {
+                var seg = token.Split('.')[1].Replace('-', '+').Replace('_', '/');
                 seg = seg.PadRight(seg.Length + (4 - seg.Length % 4) % 4, '=');
                 var payload = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(Encoding.UTF8.GetString(Convert.FromBase64String(seg)));
                 object exp;
                 if (payload.TryGetValue("exp", out exp)) _tokenExpiresUtc = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(Convert.ToDouble(exp));
             }
             catch { }
-            return _token;
+        }
+
+        void ForgetToken()
+        {
+            _token = null;
+            try { File.Delete(TokenFile); } catch { }
+        }
+
+        /// <summary>
+        /// Finds the token in the multi-megabyte JS bundle while it downloads, in 64 KB pieces, instead of
+        /// holding the whole bundle in memory as one huge string.
+        /// </summary>
+        static async Task<string> FindTokenInStreamAsync(string url, CancellationToken ct)
+        {
+            const int Overlap = 8192; // longer than any token, so one split across pieces is still found
+            using (var resp = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct))
+            {
+                if (!resp.IsSuccessStatusCode) return null;
+                using (var reader = new StreamReader(await resp.Content.ReadAsStreamAsync()))
+                {
+                    var buffer = new char[64 * 1024];
+                    string carry = "";
+                    int n;
+                    while ((n = await reader.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var piece = carry + new string(buffer, 0, n);
+                        var m = TokenPattern.Match(piece);
+                        if (m.Success && m.Index + m.Length < piece.Length) return m.Value; // complete, not cut off
+                        carry = m.Success ? piece.Substring(m.Index)
+                              : piece.Length > Overlap ? piece.Substring(piece.Length - Overlap) : piece;
+                    }
+                    var last = TokenPattern.Match(carry);
+                    return last.Success ? last.Value : null;
+                }
+            }
         }
 
         async Task<string> SearchAsync(TrackInfo t, string token, CancellationToken ct)

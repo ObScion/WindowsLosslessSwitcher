@@ -361,9 +361,9 @@ namespace LosslessSwitcher
             try
             {
                 var token = await TokenAsync(ct);
-                if (token == null) return null;
+                if (token == null) return Fail("no catalog token");
                 var songId = trackFormat.SongId ?? await SearchAsync(t, token, ct); // 1.1 cache lines have no id
-                if (songId == null) return null;
+                if (songId == null) return Fail("song not found in the catalog");
 
                 string albumId;
                 lock (_albumMemo) _albumOfSong.TryGetValue(songId, out albumId);
@@ -374,7 +374,7 @@ namespace LosslessSwitcher
                     var albums = songData != null && songData.Length > 0
                         ? Dig(songData[0] as Dictionary<string, object>, "relationships", "albums", "data") as object[] : null;
                     albumId = albums != null && albums.Length > 0 ? Str(albums[0] as Dictionary<string, object>, "id") : null;
-                    if (string.IsNullOrEmpty(albumId)) return null;
+                    if (string.IsNullOrEmpty(albumId)) return Fail("song " + songId + " has no album");
                     lock (_albumMemo) _albumOfSong[songId] = albumId;
                 }
 
@@ -386,13 +386,13 @@ namespace LosslessSwitcher
                 var albumData = Parse(albumJson, "data") as object[];
                 var tracks = albumData != null && albumData.Length > 0
                     ? Dig(albumData[0] as Dictionary<string, object>, "relationships", "tracks", "data") as object[] : null;
-                if (tracks == null) return null;
+                if (tracks == null) return Fail("album " + albumId + ": track list unavailable");
                 var ids = tracks.OfType<Dictionary<string, object>>().Where(x => Str(x, "type") == "songs")
                     .Select(x => Str(x, "id")).Where(x => x.Length > 0).Take(300).ToList();
-                if (ids.Count == 0) return null;
+                if (ids.Count == 0) return Fail("album " + albumId + ": lists no songs");
                 var songsJson = await GetAsync(Catalog("songs?extend=extendedAssetUrls&ids=" + string.Join(",", ids)), token, ct);
                 var songs = Parse(songsJson, "data") as object[];
-                if (songs == null) return null;
+                if (songs == null) return Fail("album " + albumId + ": song details unavailable");
                 var hlsUrls = songs.OfType<Dictionary<string, object>>()
                     .Select(x => Dig(x, "attributes", "extendedAssetUrls", "enhancedHls") as string)
                     .Where(u => !string.IsNullOrEmpty(u)).ToList();
@@ -406,7 +406,9 @@ namespace LosslessSwitcher
                     finally { gate.Release(); }
                 }));
                 var found = results.Where(r => r != null).ToList();
-                if (found.Count == 0 || found.Count < hlsUrls.Count) return null; // a partial album can't give a trustworthy maximum
+                if (found.Count == 0 || found.Count < hlsUrls.Count) // a partial album can't give a trustworthy maximum
+                    return Fail("album " + albumId + ": read " + found.Count + " of " + hlsUrls.Count +
+                        " lossless stream lists (" + ids.Count + " songs listed)");
                 lock (_albumMemo) _albumMemo[albumId] = found;
                 Log.Write("Album " + albumId + " (" + found.Count + " lossless tracks): " +
                     string.Join(", ", found.GroupBy(r => r.Bits + "/" + r.Rate).Select(g => g.Count() + "× " + g.Key)));
@@ -414,6 +416,12 @@ namespace LosslessSwitcher
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { Log.Write("Album lookup failed: " + ex.Message); return null; }
+        }
+
+        static List<SourceFormat> Fail(string reason)
+        {
+            Log.Write("Album lookup gave up: " + reason + "; using the track's own rate.");
+            return null;
         }
 
         string Catalog(string path) { return "https://amp-api.music.apple.com/v1/catalog/" + _storefront + "/" + path; }

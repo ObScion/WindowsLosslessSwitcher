@@ -44,9 +44,12 @@ input, a DSP preset or a room-correction profile.
 
 ## What to expect
 
-- **A second or two of silence when the rate changes.** Windows has to rebuild the audio stream, and
-  Apple Music reconnects on its own. Tracks at the same rate as the previous one start instantly.
-  If Apple Music doesn't reconnect, the app sends it one pause/play.
+- **A brief pause at the start of a track when the rate changes.** Windows has to rebuild the audio
+  stream, and Apple Music reconnects on its own, typically in 0.2–0.7 s. The switch happens within about
+  half a second of the track change, or about 30 ms for a song the app has seen before, so the pause
+  lands at the start of the track. Your DAC may add a moment of its own while it re-locks to the new
+  rate. Tracks at the same rate as the previous one start instantly. If Apple Music doesn't reconnect,
+  the app sends it one pause/play.
 - **Albums with mixed rates.** A "Hi-Res Lossless" badge means *some* tracks are hi-res, not all. On
   Steely Dan's *Aja*, for example, "Black Cow" streams at 24/192 while "Deacon Blues" streams at 24/48.
   The app follows each track, so you'll see the rate move within an album. That's correct.
@@ -87,9 +90,10 @@ of this device* **on**. The app uses it to discover which rates your DAC support
 |---|---|
 | Settings | `%APPDATA%\LosslessSwitcher\settings.ini` |
 | Log | `%APPDATA%\LosslessSwitcher\log.txt` (also under *About → Open Log*) |
+| Saved catalog results | `%APPDATA%\LosslessSwitcher\catalog-cache.tsv` (safe to delete) |
 
 When a switch surprises you, check the log. It records each track, the streams Apple offers for it,
-and the format the app chose.
+the format the app chose, how quickly it switched, and how long the dropout lasted.
 
 ## Building from source
 

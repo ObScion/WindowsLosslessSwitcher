@@ -3,6 +3,7 @@
 // Windows counterpart of SimplyCoreAudio as used by the macOS LosslessSwitcher.
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace LosslessSwitcher
@@ -105,6 +106,41 @@ namespace LosslessSwitcher
 
     [ComImport, Guid("870AF99C-171D-4F9E-AF0D-E63DF40C2BC9")]
     class PolicyConfigCom { }
+
+    // Per-app audio sessions: used to see whether Apple Music's render stream is up.
+    [ComImport, Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioSessionManager2
+    {
+        [PreserveSig] int GetAudioSessionControl(IntPtr sessionGuid, int flags, out IntPtr control);
+        [PreserveSig] int GetSimpleAudioVolume(IntPtr sessionGuid, int flags, out IntPtr volume);
+        [PreserveSig] int GetSessionEnumerator(out IAudioSessionEnumerator enumerator);
+    }
+
+    [ComImport, Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioSessionEnumerator
+    {
+        [PreserveSig] int GetCount(out int count);
+        [PreserveSig] int GetSession(int index, out IAudioSessionControl2 session);
+    }
+
+    [ComImport, Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioSessionControl2
+    {
+        // IAudioSessionControl
+        [PreserveSig] int GetState(out int state); // 0 inactive, 1 active, 2 expired
+        [PreserveSig] int GetDisplayName(out IntPtr name);
+        [PreserveSig] int SetDisplayName(IntPtr name, IntPtr context);
+        [PreserveSig] int GetIconPath(out IntPtr path);
+        [PreserveSig] int SetIconPath(IntPtr path, IntPtr context);
+        [PreserveSig] int GetGroupingParam(out Guid param);
+        [PreserveSig] int SetGroupingParam(IntPtr param, IntPtr context);
+        [PreserveSig] int RegisterAudioSessionNotification(IntPtr client);
+        [PreserveSig] int UnregisterAudioSessionNotification(IntPtr client);
+        // IAudioSessionControl2
+        [PreserveSig] int GetSessionIdentifier(out IntPtr id);
+        [PreserveSig] int GetSessionInstanceIdentifier(out IntPtr id);
+        [PreserveSig] int GetProcessId(out uint pid);
+    }
 
     sealed class DeviceInfo
     {
@@ -287,6 +323,43 @@ namespace LosslessSwitcher
             }
             finally { Marshal.ReleaseComObject(client); }
             return result;
+        }
+
+        static Guid IID_IAudioSessionManager2 = new Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F");
+
+        /// <summary>
+        /// True when one of the named processes has an active audio session (a running render stream) on
+        /// the device, false when none does, null when sessions can't be read.
+        /// </summary>
+        public static bool? IsAppStreamActive(string deviceId, params string[] processNames)
+        {
+            try
+            {
+                var d = GetDevice(deviceId);
+                if (d == null) return null;
+                object o;
+                var iid = IID_IAudioSessionManager2;
+                if (d.Activate(ref iid, ClsctxAll, IntPtr.Zero, out o) != 0) return null;
+                var mgr = (IAudioSessionManager2)o;
+                IAudioSessionEnumerator en;
+                if (mgr.GetSessionEnumerator(out en) != 0) return null;
+                int n; en.GetCount(out n);
+                for (int i = 0; i < n; i++)
+                {
+                    IAudioSessionControl2 s;
+                    if (en.GetSession(i, out s) != 0 || s == null) continue;
+                    int state; uint pid;
+                    if (s.GetState(out state) != 0 || state != 1 || s.GetProcessId(out pid) != 0) continue;
+                    try
+                    {
+                        var name = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName;
+                        if (processNames.Any(p => string.Equals(p, name, StringComparison.OrdinalIgnoreCase))) return true;
+                    }
+                    catch (ArgumentException) { } // process already gone
+                }
+                return false;
+            }
+            catch (Exception ex) { Log.Write("Audio session query failed: " + ex.Message); return null; }
         }
 
         public static float Peak(string id)

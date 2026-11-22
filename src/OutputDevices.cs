@@ -99,6 +99,9 @@ namespace LosslessSwitcher
                         if (src != null)
                         {
                             Log.Write("Detected " + src + " for " + track);
+                            var dev = TargetDevice;
+                            if (dev != null && NeedsSwitch(dev.Id, src) && !await WaitUntilSafeToSwitch(dev.Id, cts.Token))
+                                return;
                             SwitchTo(src, gen, track.DetectedUtc);
                             return;
                         }
@@ -109,6 +112,57 @@ namespace LosslessSwitcher
                 catch (OperationCanceledException) { }
                 catch (Exception ex) { Log.Write("Track processing failed: " + ex); }
             });
+        }
+
+        bool NeedsSwitch(string deviceId, SourceFormat src)
+        {
+            lock (_switchLock)
+            {
+                var cur = CoreAudio.GetDeviceFormat(deviceId);
+                var target = PickFormat(deviceId, cur, src);
+                return target != null && (cur == null || cur.Rate != target.Rate || cur.Bits != target.Bits);
+            }
+        }
+
+        // Apple Music plays audio from its AMPLibraryAgent process. Changing the device format while that
+        // process is still building its render stream (right after launch, or when a new album or
+        // playlist replaces the queue) can make it crash, taking Apple Music down with it. So in those
+        // moments, wait until its stream has been running continuously for a while before switching.
+        static readonly string[] AppleMusicAudioProcesses = { "AMPLibraryAgent", "AppleMusic" };
+        const int StableStreamMs = 1500;      // same window jordanmgibson's app settled on
+        const int StreamSettleTimeoutMs = 10000;
+        static readonly TimeSpan FreshSessionWindow = TimeSpan.FromSeconds(10);
+
+        async Task<bool> WaitUntilSafeToSwitch(string deviceId, CancellationToken ct)
+        {
+            bool freshSession = DateTime.UtcNow - _watcher.SessionStartedUtc < FreshSessionWindow;
+            var active = CoreAudio.IsAppStreamActive(deviceId, AppleMusicAudioProcesses);
+            if (active == null) return true;                          // can't tell: behave as before
+            if (!freshSession && active == true) return true;         // already playing steadily
+            if (!freshSession && !_watcher.IsPlaying) return true;    // idle: a new stream starts on the new format
+
+            Log.Write("Waiting for Apple Music's audio stream to settle before switching (" +
+                (freshSession ? "new playback session" : "stream not running yet") + ").");
+            var sw = Stopwatch.StartNew();
+            long activeSince = -1;
+            while (sw.ElapsedMilliseconds < StreamSettleTimeoutMs)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (CoreAudio.IsAppStreamActive(deviceId, AppleMusicAudioProcesses) == true)
+                {
+                    if (activeSince < 0) activeSince = sw.ElapsedMilliseconds;
+                    else if (sw.ElapsedMilliseconds - activeSince >= StableStreamMs)
+                    {
+                        Log.Write("Stream steady; switching after waiting " + sw.ElapsedMilliseconds + " ms.");
+                        return true;
+                    }
+                }
+                else activeSince = -1;
+                await Task.Delay(100, ct);
+            }
+            if (!_watcher.IsPlaying) return true; // paused: nothing is rendering, so switching is safe
+            Log.Write("Apple Music's stream never settled; skipping this switch rather than risk crashing it.");
+            return false;
         }
 
         void SwitchTo(SourceFormat src, int gen, DateTime trackChangedUtc)

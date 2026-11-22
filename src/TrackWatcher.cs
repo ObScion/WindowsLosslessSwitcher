@@ -12,6 +12,12 @@ namespace LosslessSwitcher
         GlobalSystemMediaTransportControlsSession _session;
         string _lastKey;
 
+        /// <summary>
+        /// When Apple Music's media session last (re)appeared: at launch, and when a new album or playlist
+        /// replaces the queue. Its playback pipeline is being rebuilt right after this.
+        /// </summary>
+        public DateTime SessionStartedUtc = DateTime.MinValue;
+
         /// <summary>Raised (on a worker thread) when Apple Music starts a different track.</summary>
         public event Action<TrackInfo> TrackChanged;
 
@@ -38,6 +44,7 @@ namespace LosslessSwitcher
                 if (_session != null) _session.MediaPropertiesChanged -= OnPropertiesChanged;
                 _session = found;
                 if (_session == null) return;
+                SessionStartedUtc = DateTime.UtcNow;
                 Log.Write("Attached to " + _session.SourceAppUserModelId);
                 _session.MediaPropertiesChanged += OnPropertiesChanged;
                 Read(_session);

@@ -1,5 +1,7 @@
 # Builds bin\LosslessSwitcher.exe against the .NET Framework 4.8 that ships with Windows.
 # Needs only a Roslyn csc.exe (Visual Studio or VS Build Tools) - no .NET SDK, no NuGet.
+# .\build.ps1 -Package also writes the release zip.
+param([switch]$Package)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
@@ -36,8 +38,22 @@ $refs = @(
 
 New-Item -ItemType Directory -Force "$root\bin" | Out-Null
 $cscArgs = @('-nologo', '-noconfig', '-nostdlib', '-langversion:latest', '-optimize+', '-target:winexe', '-platform:anycpu',
-          "-win32manifest:$root\src\app.manifest", "-out:$root\bin\LosslessSwitcher.exe") +
+          "-win32manifest:$root\src\app.manifest", "-win32icon:$root\src\app.ico", "-out:$root\bin\LosslessSwitcher.exe") +
         ($refs | ForEach-Object { "-r:$_" }) + (Get-ChildItem "$root\src\*.cs" | ForEach-Object FullName)
 & $csc @cscArgs
 if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE)" }
-Get-Item "$root\bin\LosslessSwitcher.exe" | Select-Object FullName, @{n='KB'; e={[math]::Round($_.Length / 1KB, 1)}}
+$exe = Get-Item "$root\bin\LosslessSwitcher.exe"
+$exe | Select-Object FullName, @{n='KB'; e={[math]::Round($_.Length / 1KB, 1)}}
+
+# -Package: bin\LosslessSwitcher-<version>-win.zip with the exe, LICENSE and README (what a release ships).
+if ($Package) {
+    $version = $exe.VersionInfo.ProductVersion
+    $zip = "$root\bin\LosslessSwitcher-$version-win.zip"
+    $stage = "$root\bin\package"
+    Remove-Item $stage, $zip -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory $stage | Out-Null
+    Copy-Item $exe.FullName, "$root\LICENSE", "$root\README.md" $stage
+    Compress-Archive "$stage\*" $zip
+    Remove-Item $stage -Recurse -Force
+    Get-Item $zip | Select-Object FullName, @{n='KB'; e={[math]::Round($_.Length / 1KB, 1)}}
+}

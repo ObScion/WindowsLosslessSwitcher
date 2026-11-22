@@ -42,6 +42,7 @@ Click the icon to open the menu:
  Show Sample Rate                   ← show the rate in the tray instead of the note
  Bit Depth Switching                ← also match bit depth (off by default)
  Prefer Closest Sample Rate Multiple
+ Match Album Rate                   ← one rate per album, so albums play without switching
  Selected Device               ▸    ← follow the Windows default, or pin one device
  Launch at Login
  About                         ▸    ← version, credits, license, source code, log
@@ -51,6 +52,19 @@ Click the icon to open the menu:
 
 **Prefer Closest Sample Rate Multiple:** if your device can't play the track's exact rate, it uses
 the highest supported rate in the same family. For example, 176.4 kHz falls back to 88.2 rather than 192.
+
+**Match Album Rate** (off by default): no switching in the middle of an album. Some Hi-Res albums mix
+rates. On Steely Dan's *Aja*, for example, two tracks are 24/192 and five are 24/48, so per-track
+switching interrupts the album five times. With this on, when an album starts the app looks up every
+track on it and sets your device once, to the highest rate the album needs:
+
+- *Aja* plays at 192 kHz throughout. Its 48 kHz tracks are upsampled by Windows by an exact 4×, the
+  cleanest kind of conversion, though they no longer reach the DAC unaltered.
+- An album that's all one rate is played at exactly that rate, still bit-perfect.
+- The rate never jumps between the 44.1 and 48 kHz families just to match a mismatched track.
+
+It applies to Apple Music catalog tracks. Your own library files are matched per track as usual. In
+a playlist or on shuffle, each track gets its own album's rate.
 
 **Scripting:** pick a `.bat`, `.cmd`, `.ps1` or `.exe`. It runs on every rate change with the new
 rate (and bit depth, when known) as arguments, e.g. `script.bat 96000 24`. Use it to switch an AVR
@@ -64,9 +78,14 @@ input, a DSP preset or a room-correction profile.
   lands at the start of the track. Your DAC may add a moment of its own while it re-locks to the new
   rate. Tracks at the same rate as the previous one start instantly. If Apple Music doesn't reconnect,
   the app sends it one pause/play.
+- **When you start a new album or open Apple Music, the first couple of seconds may play at the old
+  rate.** Changing the device format while Apple Music is still setting up playback can crash it, so
+  in those moments the app waits until Apple Music's audio has been running steadily for 1.5 s before
+  switching. Track changes within an album that's already playing aren't delayed.
 - **Albums with mixed rates.** A "Hi-Res Lossless" badge means *some* tracks are hi-res, not all. On
   Steely Dan's *Aja*, for example, "Black Cow" streams at 24/192 while "Deacon Blues" streams at 24/48.
-  The app follows each track, so you'll see the rate move within an album. That's correct.
+  By default the app follows each track, so you'll see the rate move within an album. Turn on **Match
+  Album Rate** to play the whole album at one rate instead.
 - **If the format can't be determined, nothing changes.** The device stays where it is rather than
   guessing.
 

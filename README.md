@@ -81,8 +81,10 @@ input, a DSP preset or a room-correction profile.
   rebuilds the audio stream and Apple Music reconnects on its own, typically in 0.2–0.7 s; your DAC
   may add a moment of its own while it re-locks to the new rate. Tracks at the same rate as the
   previous one aren't touched. Turn on **Match Album Rate** to make switches within an album rare.
-- **If a track goes silent anyway,** the app sends Apple Music one pause/play. If Apple Music gives up
-  and skips to the next song, the app goes back once to replay the track, which then plays normally.
+- **Occasionally a track goes silent after a switch anyway.** This happens inside Apple Music and
+  can't be fully prevented. When it does, the app notices within about 4 seconds and replays the track
+  from the start (it skips ahead and straight back), and it then plays normally at the right rate. A
+  track is never replayed twice in a row.
 - **Albums with mixed rates.** A "Hi-Res Lossless" badge means *some* tracks are hi-res, not all. On
   Steely Dan's *Aja*, for example, "Black Cow" streams at 24/192 while "Deacon Blues" streams at 24/48.
   By default the app follows each track, so you'll see the rate move within an album. Turn on **Match

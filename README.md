@@ -74,16 +74,15 @@ input, a DSP preset or a room-correction profile.
 
 ## What to expect
 
-- **A brief pause at the start of a track when the rate changes.** Windows has to rebuild the audio
-  stream, and Apple Music reconnects on its own, typically in 0.2–0.7 s. The switch happens within about
-  half a second of the track change, or about 30 ms for a song the app has seen before, so the pause
-  lands at the start of the track. Your DAC may add a moment of its own while it re-locks to the new
-  rate. Tracks at the same rate as the previous one start instantly. If Apple Music doesn't reconnect,
-  the app sends it one pause/play.
-- **When you start a new album or open Apple Music, the first couple of seconds may play at the old
-  rate.** Changing the device format while Apple Music is still setting up playback can crash it, so
-  in those moments the app waits until Apple Music's audio has been running steadily for 1.5 s before
-  switching. Track changes within an album that's already playing aren't delayed.
+- **When a track needs a different rate, its first second or two plays at the old rate, then there's a
+  brief pause.** Changing the device format while Apple Music is setting up a track's audio can make
+  it crash, or leave the track silent until Apple Music skips it. So the app waits until Apple Music's
+  audio has been running steadily for 1.5 s after the track change before switching. Windows then
+  rebuilds the audio stream and Apple Music reconnects on its own, typically in 0.2–0.7 s; your DAC
+  may add a moment of its own while it re-locks to the new rate. Tracks at the same rate as the
+  previous one aren't touched. Turn on **Match Album Rate** to make switches within an album rare.
+- **If a track goes silent anyway,** the app sends Apple Music one pause/play. If Apple Music gives up
+  and skips to the next song, the app goes back once to replay the track, which then plays normally.
 - **Albums with mixed rates.** A "Hi-Res Lossless" badge means *some* tracks are hi-res, not all. On
   Steely Dan's *Aja*, for example, "Black Cow" streams at 24/192 while "Deacon Blues" streams at 24/48.
   By default the app follows each track, so you'll see the rate move within an album. Turn on **Match

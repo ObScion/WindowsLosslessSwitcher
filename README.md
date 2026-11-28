@@ -7,7 +7,7 @@ Play a 24-bit / 192 kHz Hi-Res Lossless track and your DAC switches to 192 kHz. 
 44.1 kHz, it switches back down. Windows stops resampling, and you hear the file as it was mastered.
 
 It's a faithful Windows port of [LosslessSwitcher](https://github.com/vincentneo/LosslessSwitcher) for
-macOS: one small tray icon, one menu, no windows. The whole app is a **single exe under 100 KB** that
+macOS: one small tray icon, one menu, no windows. The whole app is a **single exe under 200 KB** that
 uses **about 3 MB of memory**, with no installer, no runtime to install, no updater and no background
 services.
 
@@ -19,7 +19,7 @@ services.
 ## Download
 
 1. Open the [latest release](https://github.com/ObScion/WindowsLosslessSwitcher/releases/latest) and
-   download `LosslessSwitcher.exe`, or the zip, which also contains the license and this README.
+   download `LosslessSwitcher.exe`, or the zip, which also contains the licenses and this README.
 2. Put it somewhere permanent, such as `%LOCALAPPDATA%\Programs\LosslessSwitcher\`, and run it.
    There's nothing to install. To uninstall, quit it from the tray and delete the file (and
    `%APPDATA%\LosslessSwitcher` if you want your settings gone too).
@@ -40,7 +40,8 @@ Click the icon to open the menu:
  192.0 kHz                          ← what your device is set to right now
  Speakers (iFi HD+ USB Audio)       ← the device being switched
  ─────────────────────────────
- Show Sample Rate                   ← show the rate in the tray instead of the note
+ Show Sample Rate                   ← show the rate in the tray instead of the note (44.1
+                                      appears as 44 over a small .1)
  Bit Depth Switching                ← also match bit depth (off by default)
  Prefer Closest Sample Rate Multiple
  Match Album Rate                   ← one rate per album, so albums play without switching
@@ -142,8 +143,8 @@ SDK and no NuGet packages: it compiles against the .NET Framework 4.8 built into
 is `bin\LosslessSwitcher.exe`. Run `.\build.ps1 -Package` to also produce the release zip
 (`bin\LosslessSwitcher-<version>-win.zip`).
 
-The source is six files in `src/`, about 1,700 lines in total. `tools\make-icon.ps1` regenerates
-`src\app.ico`.
+The source is six files in `src/`, about 1,800 lines in total. `tools\make-icon.ps1` regenerates
+`src\app.ico`. The tray label font lives in `assets\fonts\` and is embedded in the exe, compressed.
 
 ## Credits
 
@@ -152,6 +153,8 @@ The source is six files in `src/`, about 1,700 lines in total. `tools\make-icon.
 - [WindowsLosslessSwitcher](https://github.com/jordanmgibson/WindowsLosslessSwitcher) by
   @jordanmgibson. It worked out how to do this on Windows: the catalog manifest lookup, the PlayCache
   layout and format switching through `IPolicyConfig`.
+- [IBM Plex Sans Condensed](https://github.com/IBM/plex) by IBM, the font for the sample rate in the
+  tray icon.
 
 ## License and copyright
 
@@ -164,3 +167,7 @@ projects above. See [LICENSE](LICENSE). It comes with no warranty: use it at you
 
 The released exe is built from this branch, and each release links to the exact source it was built
 from. Its *About* menu shows the copyright notices and links to the license and source.
+
+The tray icon's font, IBM Plex Sans Condensed SemiBold, is Copyright © 2017 IBM Corp., with Reserved
+Font Name "Plex". It's licensed under the SIL Open Font License 1.1 (see
+[assets/fonts/IBM-Plex-OFL.txt](assets/fonts/IBM-Plex-OFL.txt)), and is embedded in the exe unmodified.

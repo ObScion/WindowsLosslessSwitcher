@@ -9,9 +9,9 @@ using System.Runtime.Versioning;
 [assembly: AssemblyProduct("LosslessSwitcher for Windows")]
 [assembly: AssemblyDescription("Switches the output device's sample rate to match Apple Music.")]
 [assembly: AssemblyCopyright("Copyright © 2022 Vincent Neo, © 2026 Jordan Gibson, © 2026 ObScion. GPL-3.0.")]
-[assembly: AssemblyVersion("1.5.0.6")]
-[assembly: AssemblyFileVersion("1.5.0.6")]
-[assembly: AssemblyInformationalVersion("1.5")]
+[assembly: AssemblyVersion("1.6.0.7")]
+[assembly: AssemblyFileVersion("1.6.0.7")]
+[assembly: AssemblyInformationalVersion("1.6")]
 
 namespace LosslessSwitcher
 {

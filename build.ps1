@@ -36,23 +36,33 @@ $refs = @(
     (Gac 'System.Runtime.InteropServices.WindowsRuntime'), (Gac 'System.Threading.Tasks')
 ) + $winRefs
 
-New-Item -ItemType Directory -Force "$root\bin" | Out-Null
+New-Item -ItemType Directory -Force "$root\bin\obj" | Out-Null
+
+# The tray label font (IBM Plex Sans Condensed SemiBold, SIL OFL 1.1) is embedded unmodified, gzip-compressed
+# to roughly halve its size in the exe; the app decompresses it into memory at startup.
+$font = "$root\assets\fonts\IBMPlexSansCondensed-SemiBold.ttf"
+$fontGz = "$root\bin\obj\label-font.ttf.gz"
+$in = [IO.File]::OpenRead($font); $out = [IO.File]::Create($fontGz)
+$gz = New-Object IO.Compression.GZipStream($out, [IO.Compression.CompressionLevel]::Optimal)
+$in.CopyTo($gz); $gz.Dispose(); $out.Dispose(); $in.Dispose()
+
 $cscArgs = @('-nologo', '-noconfig', '-nostdlib', '-langversion:latest', '-optimize+', '-target:winexe', '-platform:anycpu',
-          "-win32manifest:$root\src\app.manifest", "-win32icon:$root\src\app.ico", "-out:$root\bin\LosslessSwitcher.exe") +
+          "-win32manifest:$root\src\app.manifest", "-win32icon:$root\src\app.ico", "-out:$root\bin\LosslessSwitcher.exe",
+          "-resource:$fontGz,LabelFont.ttf.gz") +
         ($refs | ForEach-Object { "-r:$_" }) + (Get-ChildItem "$root\src\*.cs" | ForEach-Object FullName)
 & $csc @cscArgs
 if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE)" }
 $exe = Get-Item "$root\bin\LosslessSwitcher.exe"
 $exe | Select-Object FullName, @{n='KB'; e={[math]::Round($_.Length / 1KB, 1)}}
 
-# -Package: bin\LosslessSwitcher-<version>-win.zip with the exe, LICENSE and README (what a release ships).
+# -Package: bin\LosslessSwitcher-<version>-win.zip with the exe, LICENSE, README and the font's OFL license.
 if ($Package) {
     $version = $exe.VersionInfo.ProductVersion
     $zip = "$root\bin\LosslessSwitcher-$version-win.zip"
     $stage = "$root\bin\package"
     Remove-Item $stage, $zip -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory $stage | Out-Null
-    Copy-Item $exe.FullName, "$root\LICENSE", "$root\README.md" $stage
+    Copy-Item $exe.FullName, "$root\LICENSE", "$root\README.md", "$root\assets\fonts\IBM-Plex-OFL.txt" $stage
     Compress-Archive "$stage\*" $zip
     Remove-Item $stage -Recurse -Force
     Get-Item $zip | Select-Object FullName, @{n='KB'; e={[math]::Round($_.Length / 1KB, 1)}}

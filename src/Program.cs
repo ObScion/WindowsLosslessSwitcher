@@ -175,6 +175,7 @@ namespace LosslessSwitcher
             about.MenuItems.Add(new MenuItem("© 2026 Jordan Gibson (WindowsLosslessSwitcher)") { Enabled = false });
             about.MenuItems.Add(new MenuItem("© 2026 ObScion (this Windows port)") { Enabled = false });
             about.MenuItems.Add(new MenuItem("Free software under GPL-3.0, with no warranty") { Enabled = false });
+            about.MenuItems.Add(new MenuItem("Tray font: IBM Plex Sans Condensed, © 2017 IBM Corp. (SIL OFL 1.1)") { Enabled = false });
             about.MenuItems.Add(new MenuItem("View License", (s, e) => OpenUrl(RepoUrl + "/blob/lite/LICENSE")));
             about.MenuItems.Add(new MenuItem("Source Code", (s, e) => OpenUrl(RepoUrl + "/tree/lite")));
             about.MenuItems.Add("-");
@@ -289,7 +290,100 @@ namespace LosslessSwitcher
         /// <summary>Music note glyph (label == null) or the sample rate in kHz, drawn for the taskbar's theme.</summary>
         public static Icon RenderTrayIcon(string label)
         {
-            int size = SystemInformation.SmallIconSize.Width;
+            return RenderTrayIcon(label, SystemInformation.SmallIconSize.Width);
+        }
+
+        // The tray label font: IBM Plex Sans Condensed SemiBold (SIL Open Font License 1.1), embedded in the exe
+        // gzip-compressed and loaded into memory once. Falls back to Bahnschrift if it can't be loaded.
+        static readonly PrivateFontCollection LabelFonts = new PrivateFontCollection();
+        static readonly FontFamily LabelFamily = LoadLabelFont();
+
+        static FontFamily LoadLabelFont()
+        {
+            try
+            {
+                using (var res = Assembly.GetExecutingAssembly().GetManifestResourceStream("LabelFont.ttf.gz"))
+                using (var gz = new System.IO.Compression.GZipStream(res, System.IO.Compression.CompressionMode.Decompress))
+                using (var ms = new System.IO.MemoryStream())
+                {
+                    gz.CopyTo(ms);
+                    var bytes = ms.ToArray();
+                    // GDI+ reads from this memory whenever the font is used, so it is deliberately never freed.
+                    var mem = Marshal.AllocCoTaskMem(bytes.Length);
+                    Marshal.Copy(bytes, 0, mem, bytes.Length);
+                    LabelFonts.AddMemoryFont(mem, bytes.Length);
+                    return LabelFonts.Families[0];
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Tray label font failed to load (" + ex.Message + "); using Bahnschrift.");
+                return new FontFamily(FontExists("Bahnschrift") ? "Bahnschrift" : "Segoe UI");
+            }
+        }
+
+        static GraphicsPath Outline(string s)
+        {
+            var p = new GraphicsPath();
+            var style = LabelFamily.IsStyleAvailable(FontStyle.Regular) ? FontStyle.Regular : FontStyle.Bold;
+            p.AddString(s, LabelFamily, (int)style, 100f, PointF.Empty, StringFormat.GenericTypographic);
+            return p;
+        }
+
+        static void Place(Graphics g, Brush brush, GraphicsPath p, RectangleF b, float x, float y, float sx, float sy)
+        {
+            using (var m = new Matrix())
+            {
+                m.Translate(x, y);
+                m.Scale(sx, sy);
+                m.Translate(-b.X, -b.Y);
+                p.Transform(m);
+            }
+            g.FillPath(brush, p);
+        }
+
+        /// <summary>
+        /// Draws the rate as glyph outlines scaled to fill the icon (drawn as plain text, digits end up a third
+        /// of the icon tall, lost in font padding). Whole numbers use the full height, narrowed up to 35% for
+        /// three digits. With a decimal, one line can't stay legible in 16 px, so the integer goes on top
+        /// (about 58% of the height) and the decimal, smaller, sits at the bottom right after a whole-pixel dot.
+        /// </summary>
+        static void DrawLabel(Graphics g, Brush brush, string label, int size)
+        {
+            var parts = label.Split('.');
+            int t = Math.Max(1, (int)Math.Round(size / 16.0)); // dot size and gaps
+            int margin = size >= 24 ? 2 : 1;
+            int full = size - 2 * margin;
+            using (var ip = Outline(parts[0]))
+            using (var dp = parts.Length > 1 ? Outline(parts[1]) : null)
+            {
+                var ib = ip.GetBounds();
+                if (ib.Width <= 0 || ib.Height <= 0) return;
+                if (dp == null)
+                {
+                    int h = full;
+                    float sy = h / ib.Height, sx = sy, availW = size - margin;
+                    if (ib.Width * sx > availW)
+                    {
+                        sx = availW / ib.Width;
+                        if (sx < sy * 0.65f) { h = (int)Math.Floor(ib.Height * sx / 0.65f); sy = h / ib.Height; }
+                    }
+                    Place(g, brush, ip, ib, (size - ib.Width * sx) / 2f, margin + (full - h) / 2, sx, sy);
+                    return;
+                }
+                var db = dp.GetBounds();
+                int ht = (int)Math.Round(size * 0.58), hd = size - ht - t;
+                float st = ht / ib.Height, stx = Math.Min(st, size / ib.Width);
+                float wt = ib.Width * stx, xt = (size - wt) / 2f;
+                Place(g, brush, ip, ib, xt, 0, stx, st);
+                float sd = hd / db.Height, xd = xt + wt - db.Width * sd;
+                Place(g, brush, dp, db, xd, size - hd, sd, sd);
+                g.FillRectangle(brush, Math.Max(0, (int)Math.Round(xd) - 2 * t), size - t, t, t);
+            }
+        }
+
+        public static Icon RenderTrayIcon(string label, int size)
+        {
             var color = ReadPersonalize("SystemUsesLightTheme", 0) == 1 ? Color.Black : Color.White;
             using (var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
             using (var g = Graphics.FromImage(bmp))
@@ -306,21 +400,8 @@ namespace LosslessSwitcher
                 }
                 else
                 {
-                    float px = size * 0.72f;
-                    Font font = null;
-                    try
-                    {
-                        while (true)
-                        {
-                            font = new Font("Segoe UI", px, FontStyle.Bold, GraphicsUnit.Pixel);
-                            if (px <= 5 || g.MeasureString(label, font, PointF.Empty, StringFormat.GenericTypographic).Width <= size) break;
-                            font.Dispose();
-                            px -= 0.5f;
-                        }
-                        rect.Inflate(2, 0);
-                        g.DrawString(label, font, brush, rect, fmt);
-                    }
-                    finally { if (font != null) font.Dispose(); }
+                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    DrawLabel(g, brush, label, size);
                 }
                 var h = bmp.GetHicon();
                 try { return (Icon)Icon.FromHandle(h).Clone(); }

@@ -78,7 +78,6 @@ namespace LosslessSwitcher
 
         void TrackDidChange(TrackInfo track)
         {
-            if (StepBackIfSkippedAfterStall(track)) return; // the replayed track arrives as the next change
             CancellationTokenSource cts;
             int gen;
             lock (_switchLock)
@@ -245,9 +244,12 @@ namespace LosslessSwitcher
                 .First();
         }
 
-        // A live format change invalidates Apple Music's render stream; it normally rebuilds it within
-        // a few seconds. Logs how long the gap lasted; if the device is still silent after 8 s while
-        // Apple Music claims to be playing, nudge it once.
+        // A live format change invalidates Apple Music's render stream; it normally rebuilds it within a
+        // second (measured 0.02-0.7 s). Logs how long the gap lasted. Occasionally the new track never
+        // starts: then replay it, which always worked (the device is already at its rate, so no switch).
+        const int StallSilentNoStreamMs = 4000; // silent and Apple Music's stream gone: stalled
+        const int StallSilentMs = 8000;         // silent, stream or not: stalled (backstop)
+
         void WatchAudioReturn(string deviceId, int gen, string trackKey)
         {
             Task.Run(async () =>
@@ -265,54 +267,59 @@ namespace LosslessSwitcher
                     await Task.Delay(20);
                 }
                 if (gapStart < 0) { Log.Write("No dropout detected in the 3 s after the switch."); return; }
-                // Phase 2: wait for Apple Music's rebuilt stream to produce sound.
-                while (sw.ElapsedMilliseconds < gapStart + 8000)
+                // Phase 2: wait for Apple Music's rebuilt stream to produce sound. A quiet intro keeps
+                // Apple Music's stream active, so silence alone isn't trusted until the backstop.
+                string why = null;
+                while (true)
                 {
                     if (gen != _generation || !_watcher.IsPlaying) return;
-                    var peak = CoreAudio.Peak(deviceId);
-                    if (peak > Silence)
+                    long silent = sw.ElapsedMilliseconds - gapStart;
+                    if (CoreAudio.Peak(deviceId) > Silence)
                     {
-                        Log.Write("Dropout started " + gapStart + " ms after the switch and lasted " +
-                            (sw.ElapsedMilliseconds - gapStart) + " ms.");
+                        Log.Write("Dropout started " + gapStart + " ms after the switch and lasted " + silent + " ms.");
                         return;
                     }
+                    if (silent >= StallSilentMs) { why = "silent for 8 s"; break; }
+                    if (silent >= StallSilentNoStreamMs &&
+                        CoreAudio.IsAppStreamActive(deviceId, AppleMusicAudioProcesses) == false)
+                    { why = "silent for 4 s and Apple Music's audio stream is gone"; break; }
                     await Task.Delay(20);
                 }
                 if (gen != _generation || !_watcher.IsPlaying) return;
-                Log.Write("No audio 8 s after the switch; nudging Apple Music (pause/play).");
-                lock (_switchLock) { _stalledTrackKey = trackKey; _stallNudgedUtc = DateTime.UtcNow; }
-                try { await _watcher.NudgeAsync(); } catch (Exception ex) { Log.Write("Nudge failed: " + ex.Message); }
+                await ReplayStalledTrackAsync(trackKey, why);
             });
         }
 
-        // If the nudge doesn't revive a stalled track, Apple Music gives up on it and moves to the next one.
-        // Replaying the track then works (the device is already at its rate), so step back to it once.
-        string _stalledTrackKey, _bouncedTrackKey;
-        DateTime _stallNudgedUtc, _bouncedUtc;
-        static readonly TimeSpan SkipAfterStallWindow = TimeSpan.FromSeconds(8);
+        string _replayedTrackKey;
+        DateTime _replayedUtc;
 
-        /// <summary>True when this track change is Apple Music skipping past a stalled track (and we stepped back).</summary>
-        bool StepBackIfSkippedAfterStall(TrackInfo track)
+        /// <summary>
+        /// Restarts a track that went silent after a switch: skip to the next track, then straight back.
+        /// That's what fixed every stall seen (by hand, or Apple Music skipping and the app stepping back),
+        /// without waiting for Apple Music to give up. A track is never replayed twice in a row, so one that
+        /// keeps failing can't loop; the replay itself doesn't switch (the device is already at its rate).
+        /// </summary>
+        async Task ReplayStalledTrackAsync(string trackKey, string why)
         {
-            string stalled;
             lock (_switchLock)
             {
-                stalled = _stalledTrackKey;
-                bool recent = stalled != null && DateTime.UtcNow - _stallNudgedUtc < SkipAfterStallWindow;
-                _stalledTrackKey = null;
-                if (!recent || track.Key == stalled) return false;
-                // Never bounce the same track twice in a row: if it stalls again, let Apple Music move on.
-                if (stalled == _bouncedTrackKey && DateTime.UtcNow - _bouncedUtc < TimeSpan.FromMinutes(2)) return false;
-                _bouncedTrackKey = stalled;
-                _bouncedUtc = DateTime.UtcNow;
+                if (trackKey == _replayedTrackKey && DateTime.UtcNow - _replayedUtc < TimeSpan.FromMinutes(2))
+                {
+                    Log.Write("The track stalled again after a replay (" + why + "); leaving it to Apple Music.");
+                    return;
+                }
+                _replayedTrackKey = trackKey;
+                _replayedUtc = DateTime.UtcNow;
             }
-            Log.Write("Apple Music skipped to " + track + " after the previous track stalled; going back to replay it.");
-            Task.Run(async () =>
+            Log.Write("No audio after the switch (" + why + "); replaying the track.");
+            try
             {
-                try { await _watcher.PreviousAsync(); }
-                catch (Exception ex) { Log.Write("Going back failed: " + ex.Message); }
-            });
-            return true;
+                await _watcher.SkipNextAsync();
+                var sw = Stopwatch.StartNew();
+                while (_watcher.CurrentTrackKey == trackKey && sw.ElapsedMilliseconds < 2000) await Task.Delay(50);
+                await _watcher.PreviousAsync();
+            }
+            catch (Exception ex) { Log.Write("Replaying the track failed: " + ex.Message); }
         }
 
         void UpdateSampleRate(int rate, int? bits)

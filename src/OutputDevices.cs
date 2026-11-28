@@ -78,6 +78,7 @@ namespace LosslessSwitcher
 
         void TrackDidChange(TrackInfo track)
         {
+            if (StepBackIfSkippedAfterStall(track)) return; // the replayed track arrives as the next change
             CancellationTokenSource cts;
             int gen;
             lock (_switchLock)
@@ -113,7 +114,7 @@ namespace LosslessSwitcher
                             var dev = TargetDevice;
                             if (dev != null && NeedsSwitch(dev.Id, src) && !await WaitUntilSafeToSwitch(dev.Id, cts.Token))
                                 return;
-                            SwitchTo(src, gen, track.DetectedUtc);
+                            SwitchTo(src, gen, track);
                             return;
                         }
                         await Task.Delay(2000, cts.Token);
@@ -137,24 +138,23 @@ namespace LosslessSwitcher
         }
 
         // Apple Music plays audio from its AMPLibraryAgent process. Changing the device format while that
-        // process is still building its render stream (right after launch, or when a new album or
-        // playlist replaces the queue) can make it crash, taking Apple Music down with it. So in those
-        // moments, wait until its stream has been running continuously for a while before switching.
+        // process is building or handing over its render stream can break it:
+        // - right after launch, or when a new album or playlist replaces the queue, it crashed
+        //   (AMPLibraryAgent fail-fast, taking AppleMusic.exe down with it);
+        // - right after one track flows into the next, the stream that looks active is the old track's,
+        //   ending; switching then left the new track silent until Apple Music gave up and skipped it.
+        // So before every switch, wait until the stream has run continuously for 1.5 s, observed after the
+        // track change. That outlasts the hand-over. (Same rule and window as jordanmgibson's app.)
         static readonly string[] AppleMusicAudioProcesses = { "AMPLibraryAgent", "AppleMusic" };
-        const int StableStreamMs = 1500;      // same window jordanmgibson's app settled on
+        const int StableStreamMs = 1500;
         const int StreamSettleTimeoutMs = 10000;
-        static readonly TimeSpan FreshSessionWindow = TimeSpan.FromSeconds(10);
 
         async Task<bool> WaitUntilSafeToSwitch(string deviceId, CancellationToken ct)
         {
-            bool freshSession = DateTime.UtcNow - _watcher.SessionStartedUtc < FreshSessionWindow;
             var active = CoreAudio.IsAppStreamActive(deviceId, AppleMusicAudioProcesses);
-            if (active == null) return true;                          // can't tell: behave as before
-            if (!freshSession && active == true) return true;         // already playing steadily
-            if (!freshSession && !_watcher.IsPlaying) return true;    // idle: a new stream starts on the new format
+            if (active == null) return true;                        // can't tell: behave as before
+            if (active == false && !_watcher.IsPlaying) return true; // paused: nothing to disturb; a new stream starts on the new format
 
-            Log.Write("Waiting for Apple Music's audio stream to settle before switching (" +
-                (freshSession ? "new playback session" : "stream not running yet") + ").");
             var sw = Stopwatch.StartNew();
             long activeSince = -1;
             while (sw.ElapsedMilliseconds < StreamSettleTimeoutMs)
@@ -165,7 +165,7 @@ namespace LosslessSwitcher
                     if (activeSince < 0) activeSince = sw.ElapsedMilliseconds;
                     else if (sw.ElapsedMilliseconds - activeSince >= StableStreamMs)
                     {
-                        Log.Write("Stream steady; switching after waiting " + sw.ElapsedMilliseconds + " ms.");
+                        Log.Write("Apple Music's audio steady for 1.5 s; switching (waited " + sw.ElapsedMilliseconds + " ms).");
                         return true;
                     }
                 }
@@ -177,8 +177,9 @@ namespace LosslessSwitcher
             return false;
         }
 
-        void SwitchTo(SourceFormat src, int gen, DateTime trackChangedUtc)
+        void SwitchTo(SourceFormat src, int gen, TrackInfo track)
         {
+            var trackChangedUtc = track.DetectedUtc;
             bool switched = false;
             string deviceId;
             lock (_switchLock)
@@ -207,7 +208,7 @@ namespace LosslessSwitcher
                 UpdateSampleRate(now.Rate, now.Bits);
                 switched = true;
             }
-            if (switched && _watcher.IsPlaying) WatchAudioReturn(deviceId, gen);
+            if (switched && _watcher.IsPlaying) WatchAudioReturn(deviceId, gen, track.Key);
         }
 
         DevFormat PickFormat(string deviceId, DevFormat cur, SourceFormat src)
@@ -247,7 +248,7 @@ namespace LosslessSwitcher
         // A live format change invalidates Apple Music's render stream; it normally rebuilds it within
         // a few seconds. Logs how long the gap lasted; if the device is still silent after 8 s while
         // Apple Music claims to be playing, nudge it once.
-        void WatchAudioReturn(string deviceId, int gen)
+        void WatchAudioReturn(string deviceId, int gen, string trackKey)
         {
             Task.Run(async () =>
             {
@@ -279,8 +280,39 @@ namespace LosslessSwitcher
                 }
                 if (gen != _generation || !_watcher.IsPlaying) return;
                 Log.Write("No audio 8 s after the switch; nudging Apple Music (pause/play).");
+                lock (_switchLock) { _stalledTrackKey = trackKey; _stallNudgedUtc = DateTime.UtcNow; }
                 try { await _watcher.NudgeAsync(); } catch (Exception ex) { Log.Write("Nudge failed: " + ex.Message); }
             });
+        }
+
+        // If the nudge doesn't revive a stalled track, Apple Music gives up on it and moves to the next one.
+        // Replaying the track then works (the device is already at its rate), so step back to it once.
+        string _stalledTrackKey, _bouncedTrackKey;
+        DateTime _stallNudgedUtc, _bouncedUtc;
+        static readonly TimeSpan SkipAfterStallWindow = TimeSpan.FromSeconds(8);
+
+        /// <summary>True when this track change is Apple Music skipping past a stalled track (and we stepped back).</summary>
+        bool StepBackIfSkippedAfterStall(TrackInfo track)
+        {
+            string stalled;
+            lock (_switchLock)
+            {
+                stalled = _stalledTrackKey;
+                bool recent = stalled != null && DateTime.UtcNow - _stallNudgedUtc < SkipAfterStallWindow;
+                _stalledTrackKey = null;
+                if (!recent || track.Key == stalled) return false;
+                // Never bounce the same track twice in a row: if it stalls again, let Apple Music move on.
+                if (stalled == _bouncedTrackKey && DateTime.UtcNow - _bouncedUtc < TimeSpan.FromMinutes(2)) return false;
+                _bouncedTrackKey = stalled;
+                _bouncedUtc = DateTime.UtcNow;
+            }
+            Log.Write("Apple Music skipped to " + track + " after the previous track stalled; going back to replay it.");
+            Task.Run(async () =>
+            {
+                try { await _watcher.PreviousAsync(); }
+                catch (Exception ex) { Log.Write("Going back failed: " + ex.Message); }
+            });
+            return true;
         }
 
         void UpdateSampleRate(int rate, int? bits)

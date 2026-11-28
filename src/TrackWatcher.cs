@@ -111,6 +111,13 @@ namespace LosslessSwitcher
             }
         }
 
+        /// <summary>Go back to the previous track (used to replay a track Apple Music skipped after it stalled).</summary>
+        public async Task PreviousAsync()
+        {
+            var s = _session;
+            if (s != null) await s.TrySkipPreviousAsync();
+        }
+
         /// <summary>Pause/play cycle that makes Apple Music rebuild a render stream that died in a format switch.</summary>
         public async Task NudgeAsync()
         {
